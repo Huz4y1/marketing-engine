@@ -1,0 +1,41 @@
+postcode_area,town,county,latitude,longitude,weight
+E,London,Greater London,51.545,-0.035,3
+EC,London,Greater London,51.518,-0.095,3
+N,London,Greater London,51.570,-0.110,3
+SE,London,Greater London,51.460,-0.050,3
+SW,London,Greater London,51.460,-0.175,3
+W,London,Greater London,51.510,-0.215,3
+M,Manchester,Greater Manchester,53.480,-2.242,8
+B,Birmingham,West Midlands,52.486,-1.890,8
+CV,Coventry,West Midlands,52.408,-1.510,3
+LS,Leeds,West Yorkshire,53.800,-1.549,6
+BD,Bradford,West Yorkshire,53.795,-1.752,3
+S,Sheffield,South Yorkshire,53.381,-1.470,4
+L,Liverpool,Merseyside,53.408,-2.991,5
+BS,Bristol,Bristol,51.454,-2.588,5
+NG,Nottingham,Nottinghamshire,52.954,-1.158,4
+LE,Leicester,Leicestershire,52.637,-1.135,4
+NE,Newcastle upon Tyne,Tyne and Wear,54.978,-1.618,4
+CF,Cardiff,South Glamorgan,51.482,-3.179,3
+G,Glasgow,Lanarkshire,55.864,-4.252,5
+EH,Edinburgh,Midlothian,55.953,-3.189,4
+SO,Southampton,Hampshire,50.910,-1.404,3
+NR,Norwich,Norfolk,52.630,1.297,2
+RG,Reading,Berkshire,51.454,-0.978,3
+PL,Plymouth,Devon,50.376,-4.143,2
+EX,Exeter,Devon,50.718,-3.534,2
+BN,Brighton,East Sussex,50.822,-0.137,3
+OX,Oxford,Oxfordshire,51.752,-1.258,2
+CB,Cambridge,Cambridgeshire,52.205,0.122,2
+YO,York,North Yorkshire,53.960,-1.087,2
+HU,Hull,East Riding of Yorkshire,53.745,-0.336,2
+AB,Aberdeen,Aberdeenshire,57.150,-2.094,2
+SA,Swansea,West Glamorgan,51.621,-3.944,2
+ST,Stoke-on-Trent,Staffordshire,53.003,-2.180,2
+DE,Derby,Derbyshire,52.922,-1.476,2
+TS,Middlesbrough,North Yorkshire,54.574,-1.235,2
+PR,Preston,Lancashire,53.763,-2.703,2
+IP,Ipswich,Suffolk,52.059,1.155,2
+BT,Belfast,County Antrim,54.597,-5.930,3
+IV,Inverness,Highland,57.478,-4.225,1
+DD,Dundee,Angus,56.462,-2.971,1
