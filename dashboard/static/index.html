@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Marketing Engine Dashboard</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Marketing Engine</h1>
+      <p class="muted">Wholesale &amp; retail leads cleaned with PySpark, loaded into PostgreSQL and queried live with SQLAlchemy.</p>
+    </div>
+    <button id="run-all" type="button">Re-run all queries</button>
+  </header>
+
+  <main>
+    <section id="cards" class="grid"></section>
+
+    <section class="card console">
+      <div class="card-head">
+        <h2>SQL console</h2>
+        <span class="status">Read-only &middot; one SELECT or WITH statement &middot; up to 500 rows &middot; Ctrl+Enter to run</span>
+      </div>
+      <textarea id="sql" spellcheck="false" aria-label="SQL query">SELECT postcode_area, COUNT(*) AS leads, COUNT(*) FILTER (WHERE tps_registered) AS tps
+FROM leads
+GROUP BY postcode_area
+ORDER BY leads DESC
+LIMIT 15;</textarea>
+      <div class="card-head">
+        <button id="run-sql" type="button">Run query</button>
+        <span id="sql-status" class="status" role="status"></span>
+      </div>
+      <div id="sql-result" class="table-wrap"></div>
+    </section>
+  </main>
+
+  <template id="card-template">
+    <article class="card">
+      <div class="card-head">
+        <h2></h2>
+        <button type="button" class="run">Run</button>
+      </div>
+      <div class="chart"></div>
+      <div class="card-foot">
+        <details>
+          <summary>SQL</summary>
+          <pre></pre>
+        </details>
+        <span class="status" role="status"></span>
+      </div>
+    </article>
+  </template>
+</body>
+</html>
