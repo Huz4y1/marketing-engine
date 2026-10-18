@@ -99,39 +99,68 @@ The API is a single read-only endpoint: `GET /api/dashboard?industry=K` (or `ALL
 
 ## Running it
 
-**Requirements:** Python 3.10+, Java 17+ (for Spark), and a local PostgreSQL server.
+### 1. Install the prerequisites
+
+| Tool | Version | Download |
+|---|---|---|
+| Python | 3.10 or newer | https://www.python.org/downloads/ |
+| Java | 17 or newer (Spark runs on it) | https://adoptium.net/ |
+| PostgreSQL | any recent version, running locally | https://www.postgresql.org/download/ |
+
+Check they are installed. Each command should print a version number:
 
 ```powershell
+python --version
+java -version
+psql --version
+```
+
+If `psql` isn't found, PostgreSQL may still be installed; its tools just aren't on your PATH. The pipeline doesn't need `psql`, only a running server and its password.
+
+### 2. Get the code and install the Python packages
+
+**Windows (PowerShell)**
+
+```powershell
+git clone https://github.com/Huz4y1/marketing-engine.git
+cd marketing-engine
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
+```
 
+**macOS / Linux**
+
+```bash
+git clone https://github.com/Huz4y1/marketing-engine.git
+cd marketing-engine
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 3. Point the project at your database
+
+Replace `<your-password>` with your PostgreSQL password. You don't need to create the `marketing_engine` database; the pipeline creates it.
+
+```powershell
 $env:DATABASE_URL = "postgresql+psycopg://postgres:<your-password>@localhost:5432/marketing_engine"
+```
 
+```bash
+export DATABASE_URL="postgresql+psycopg://postgres:<your-password>@localhost:5432/marketing_engine"
+```
+
+This setting only lasts for the current terminal window. If you open a new terminal, activate the venv and set it again.
+
+### 4. Generate the data and run the pipeline
+
+```powershell
 python -m etl.source.generate_fake_data
 python -m etl.pipeline
-python -m dashboard.app
 ```
 
-Then open http://127.0.0.1:8000.
-
-On macOS/Linux, use `source venv/bin/activate` and `export DATABASE_URL=...` instead. If your password contains special characters, URL-encode them (for example `@` becomes `%40`).
-
-To run a single layer:
-
-```powershell
-python -m etl.jobs.bronze_ingest
-python -m etl.jobs.silver_leads
-python -m etl.jobs.gold_marts
-```
-
-To run the tests:
-
-```powershell
-python -m pytest tests
-```
-
-Example pipeline output:
+On Windows, Spark prints a long `HADOOP_HOME and hadoop.home.dir are unset` warning when it starts. This is expected and harmless; keep waiting. The run takes about a minute and finishes with:
 
 ```
 bronze  Raw rows from 5 source files               27040
@@ -139,12 +168,43 @@ silver  Rows read from bronze                      27040
 silver  Rows with valid contact details            16675
 silver  Unique leads                               15116
 gold    Rows across 8 gold tables                   1075
+Pipeline finished: bronze, silver and gold schemas loaded into marketing_engine
 ```
 
-### Notes
+### 5. Open the dashboard
 
-- **JDBC driver:** the first run downloads the PostgreSQL JDBC driver from Maven Central into `jars/`.
-- **No `winutils.exe` needed on Windows:** Spark loads the driver from the driver classpath and only ever writes to PostgreSQL. The `HADOOP_HOME` warning it prints at startup can be ignored.
+```powershell
+python -m dashboard.app
+```
+
+Open http://127.0.0.1:8000 in your browser. The map needs an internet connection to load its tiles. Press `Ctrl+C` in the terminal to stop the server.
+
+### Optional: run one layer or the tests
+
+```powershell
+python -m etl.jobs.bronze_ingest
+python -m etl.jobs.silver_leads
+python -m etl.jobs.gold_marts
+
+python -m pytest tests
+```
+
+### Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `venv\Scripts\activate` says *running scripts is disabled on this system* | Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, then try again. |
+| `pip install` fails with *No such file or directory* deep inside `pyspark` | The folder path is too long for Windows. Clone into a shorter folder (e.g. `C:\dev\marketing-engine`) or [enable long paths](https://learn.microsoft.com/windows/win32/fileio/maximum-file-path-limitation). |
+| `password authentication failed for user "postgres"` | The password in `DATABASE_URL` is wrong. If it contains special characters, URL-encode them (`@` becomes `%40`, `#` becomes `%23`). |
+| `connection refused` on port 5432 | PostgreSQL isn't running. Start it from Windows Services (`postgresql-x64-…`) or with `brew services start postgresql` on macOS. |
+| `JAVA_GATEWAY_EXITED` or `java not found` | Java isn't installed or isn't on your PATH. Install Java 17+ and open a new terminal. |
+| Dashboard says *Could not load the dashboard* | The pipeline hasn't run against this database yet, or `DATABASE_URL` isn't set in the dashboard's terminal. |
+| `error while attempting to bind on address` when starting the dashboard | Something is already using port 8000, usually another dashboard terminal. Close it and try again. |
+
+### How it runs on Windows
+
+- **JDBC driver:** the first pipeline run downloads the PostgreSQL JDBC driver from Maven Central into `jars/`.
+- **No `winutils.exe` needed:** Spark loads the driver from the driver classpath and only ever writes to PostgreSQL, never to local files.
 - **Partitions:** `spark.sql.shuffle.partitions` is lowered to 8 in `etl/config.py`. Spark's default of 200 is far too many for data this size.
 
 ## Project layout
