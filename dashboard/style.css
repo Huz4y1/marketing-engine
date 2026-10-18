@@ -61,9 +61,27 @@ main {
 }
 
 header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
   padding-top: 40px;
   padding-bottom: 20px;
 }
+
+.api-link {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.api-link:hover { border-color: var(--accent); }
 
 h1 {
   margin: 0 0 4px;
