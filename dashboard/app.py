@@ -1,17 +1,15 @@
 import os
-import time
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
 STATIC = Path(__file__).resolve().parent / "static"
-MAX_ROWS = 500
+FILTER = ":industry IN ('ALL', sector_code)"
 
 engine = create_engine(
     os.getenv("DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/marketing_engine"),
@@ -19,123 +17,153 @@ engine = create_engine(
     pool_pre_ping=True,
 )
 
-QUERIES = {
-    "headline": {
-        "title": "Headline stats",
+CHARTS = {
+    "kpis": {
+        "title": "Overview",
         "chart": "kpi",
-        "sql": """SELECT COUNT(*) AS leads,
-       COUNT(DISTINCT company) AS companies,
-       COUNT(*) FILTER (WHERE NOT tps_registered) AS callable_leads,
-       ROUND(100.0 * AVG(tps_registered::int), 1) AS "TPS registered %"
-FROM leads""",
+        "sql": f"""
+            SELECT SUM(leads) AS leads,
+                   SUM(companies) AS companies,
+                   SUM(callable_leads) AS callable_leads,
+                   ROUND(100.0 * SUM(tps_leads) / NULLIF(SUM(leads), 0), 1) AS "TPS registered %"
+            FROM gold.industry_summary
+            WHERE {FILTER}""",
     },
-    "etl_funnel": {
-        "title": "ETL funnel (rows kept per stage)",
+    "reachability": {
+        "title": "Reachability",
+        "chart": "donut",
+        "sql": f"""
+            SELECT 'Callable' AS status, SUM(callable_leads) AS leads
+            FROM gold.industry_summary WHERE {FILTER}
+            UNION ALL
+            SELECT 'TPS registered', SUM(tps_leads)
+            FROM gold.industry_summary WHERE {FILTER}""",
+    },
+    "email_mix": {
+        "title": "Email type",
+        "chart": "donut",
+        "sql": f"""
+            SELECT email_type, SUM(leads) AS leads
+            FROM gold.email_mix
+            WHERE {FILTER}
+            GROUP BY email_type
+            ORDER BY array_position(ARRAY['Named contact', 'Generic inbox', 'Personal mailbox'], email_type)""",
+    },
+    "size_mix": {
+        "title": "Company size",
+        "chart": "donut",
+        "sql": f"""
+            SELECT company_size, SUM(leads) AS leads
+            FROM gold.size_mix
+            WHERE {FILTER}
+            GROUP BY company_size
+            ORDER BY array_position(
+                ARRAY['Micro (1-10)', 'Small (11-49)', 'Medium (50-199)', 'Large (200+)', 'Unknown'], company_size)""",
+    },
+    "map": {
+        "title": "Lead locations",
+        "chart": "map",
+        "sql": f"""
+            SELECT town, postcode_area, latitude, longitude, SUM(leads) AS leads
+            FROM gold.location_summary
+            WHERE {FILTER} AND latitude IS NOT NULL
+            GROUP BY town, postcode_area, latitude, longitude
+            ORDER BY leads DESC""",
+    },
+    "towns": {
+        "title": "Top towns",
         "chart": "bar",
-        "sql": """SELECT stage, row_count
-FROM etl_stages
-ORDER BY step""",
+        "sql": f"""
+            SELECT town, SUM(leads) AS leads
+            FROM gold.location_summary
+            WHERE {FILTER} AND town IS NOT NULL
+            GROUP BY town
+            ORDER BY leads DESC
+            LIMIT 10""",
     },
-    "by_division": {
-        "title": "Leads by SIC division",
+    "industries": {
+        "title": "Leads by industry",
+        "chart": "rank",
+        "sql": """
+            SELECT sector_code, industry, leads
+            FROM gold.industry_summary
+            ORDER BY leads DESC""",
+    },
+    "tps_by_industry": {
+        "title": "TPS-registered rate by industry",
+        "chart": "rank",
+        "sql": """
+            SELECT sector_code, industry, ROUND(100.0 * tps_leads / NULLIF(leads, 0), 1) AS "TPS %"
+            FROM gold.industry_summary
+            ORDER BY 3 DESC""",
+    },
+    "turnover": {
+        "title": "Turnover profile vs all industries",
+        "chart": "compare",
+        "sql": f"""
+            WITH bands AS (
+                SELECT turnover_band,
+                       SUM(leads) FILTER (WHERE {FILTER}) AS selected,
+                       SUM(leads) AS overall
+                FROM gold.turnover_mix
+                GROUP BY turnover_band
+            )
+            SELECT turnover_band,
+                   ROUND(100.0 * COALESCE(selected, 0) / NULLIF(SUM(selected) OVER (), 0), 1) AS selected_pct,
+                   ROUND(100.0 * overall / SUM(overall) OVER (), 1) AS all_pct
+            FROM bands
+            ORDER BY turnover_band""",
+    },
+    "divisions": {
+        "title": "Top SIC divisions",
         "chart": "bar",
-        "sql": """SELECT sic_division, COUNT(*) AS leads
-FROM leads
-GROUP BY sic_division
-ORDER BY leads DESC""",
+        "sql": f"""
+            SELECT sic_division, SUM(leads) AS leads
+            FROM gold.division_summary
+            WHERE {FILTER}
+            GROUP BY sic_division
+            ORDER BY leads DESC
+            LIMIT 8""",
     },
-    "top_classes": {
-        "title": "Top SIC classes",
-        "chart": "bar",
-        "sql": """SELECT sic_class, COUNT(*) AS leads
-FROM leads
-GROUP BY sic_class
-ORDER BY leads DESC
-LIMIT 10""",
-    },
-    "by_county": {
-        "title": "Top counties",
-        "chart": "bar",
-        "sql": """SELECT county, COUNT(*) AS leads
-FROM leads
-WHERE county IS NOT NULL
-GROUP BY county
-ORDER BY leads DESC
-LIMIT 10""",
-    },
-    "by_employees": {
-        "title": "Leads by employee band",
-        "chart": "bar",
-        "sql": """SELECT COALESCE(employee_band, 'U : Unknown') AS employee_band, COUNT(*) AS leads
-FROM leads
-GROUP BY 1
-ORDER BY 1""",
-    },
-    "by_turnover": {
-        "title": "Leads by turnover band",
-        "chart": "bar",
-        "sql": """SELECT COALESCE(turnover_band, 'U : Unknown') AS turnover_band, COUNT(*) AS leads
-FROM leads
-GROUP BY 1
-ORDER BY 1""",
-    },
-    "by_role": {
+    "roles": {
         "title": "Contact job roles",
         "chart": "bar",
-        "sql": """SELECT COALESCE(job_role, 'Not given') AS job_role, COUNT(*) AS leads
-FROM leads
-GROUP BY 1
-ORDER BY leads DESC""",
-    },
-    "email_type": {
-        "title": "Company vs personal email",
-        "chart": "bar",
-        "sql": """SELECT CASE
-         WHEN split_part(email, '@', 2) IN ('gmail.com', 'hotmail.co.uk', 'outlook.com', 'yahoo.co.uk')
-           THEN 'Personal mailbox'
-         WHEN email LIKE 'info@%' THEN 'Generic company inbox'
-         ELSE 'Named company address'
-       END AS email_type,
-       COUNT(*) AS leads
-FROM leads
-GROUP BY 1
-ORDER BY leads DESC""",
-    },
-    "by_source": {
-        "title": "Leads by source table",
-        "chart": "bar",
-        "sql": """SELECT source_table, COUNT(*) AS leads
-FROM leads
-GROUP BY source_table
-ORDER BY source_table""",
+        "sql": f"""
+            SELECT job_role, SUM(leads) AS leads
+            FROM gold.role_mix
+            WHERE {FILTER}
+            GROUP BY job_role
+            ORDER BY leads DESC""",
     },
     "incorporations": {
         "title": "Companies incorporated per year",
         "chart": "column",
-        "sql": """SELECT EXTRACT(YEAR FROM incorporation_date)::int AS year, COUNT(*) AS companies
-FROM leads
-WHERE incorporation_date IS NOT NULL
-GROUP BY 1
-ORDER BY 1""",
+        "sql": """
+            WITH years AS (
+                SELECT generate_series(MIN(year), MAX(year)) AS year
+                FROM gold.incorporations
+            )
+            SELECT y.year, COALESCE(SUM(i.companies), 0) AS companies
+            FROM years y
+            LEFT JOIN gold.incorporations i
+              ON i.year = y.year AND :industry IN ('ALL', i.sector_code)
+            GROUP BY y.year
+            ORDER BY y.year""",
+    },
+    "pipeline": {
+        "title": "How the data was built",
+        "chart": "pipeline",
+        "sql": """
+            SELECT layer, stage, row_count
+            FROM public.etl_stages
+            ORDER BY array_position(ARRAY['bronze', 'silver', 'gold'], layer), step""",
     },
 }
 
 
-class Query(BaseModel):
-    sql: str
-
-
-def run(sql):
-    start = time.perf_counter()
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("SET TRANSACTION READ ONLY"))
-            result = conn.execute(text(sql))
-            columns = list(result.keys())
-            rows = [list(row) for row in result.fetchmany(MAX_ROWS)]
-    except SQLAlchemyError as e:
-        raise HTTPException(400, str(getattr(e, "orig", None) or e).strip())
-    return {"columns": columns, "rows": rows, "ms": round((time.perf_counter() - start) * 1000, 1)}
+def fetch(conn, sql, industry):
+    result = conn.execute(text(sql), {"industry": industry})
+    return {"columns": list(result.keys()), "rows": [list(row) for row in result]}
 
 
 app = FastAPI(title="Marketing Engine Dashboard")
@@ -147,24 +175,17 @@ def index():
     return FileResponse(STATIC / "index.html")
 
 
-@app.get("/api/queries")
-def list_queries():
-    return [{"key": key, **query} for key, query in QUERIES.items()]
-
-
-@app.get("/api/queries/{key}")
-def run_saved_query(key: str):
-    if key not in QUERIES:
-        raise HTTPException(404, "Unknown query")
-    return run(QUERIES[key]["sql"])
-
-
-@app.post("/api/sql")
-def run_custom_query(query: Query):
-    sql = query.sql.strip().rstrip(";").strip()
-    if ";" in sql or not sql.lower().startswith(("select", "with")):
-        raise HTTPException(400, "Only a single SELECT or WITH statement is allowed.")
-    return run(sql)
+@app.get("/api/dashboard")
+def dashboard(industry: str = Query("ALL", pattern="^(ALL|[A-Z])$")):
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SET TRANSACTION READ ONLY"))
+            return [
+                {"key": key, "title": chart["title"], "chart": chart["chart"], **fetch(conn, chart["sql"], industry)}
+                for key, chart in CHARTS.items()
+            ]
+    except SQLAlchemyError as e:
+        raise HTTPException(503, f"Database query failed: {getattr(e, 'orig', None) or e}")
 
 
 if __name__ == "__main__":
