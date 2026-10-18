@@ -11,3 +11,4 @@ derby.log
 .vscode/
 .idea/
 .playwright-mcp/
+.pytest_cache/
