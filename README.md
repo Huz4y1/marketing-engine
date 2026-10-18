@@ -2,7 +2,7 @@
 
 An end-to-end ETL pipeline that turns messy B2B lead lists into analytics-ready tables, with a live dashboard you can filter by industry.
 
-Five raw CSV exports with inconsistent schemas are processed by **PySpark** through a **bronze → silver → gold** medallion architecture in **PostgreSQL**. A **FastAPI** dashboard then reads the gold layer with raw SQL through **SQLAlchemy**, and renders it with HTML, CSS and a Leaflet map.
+Five raw CSV exports with inconsistent schemas are processed by **PySpark** through a **bronze → silver → gold** medallion architecture in **PostgreSQL**. A read-only **FastAPI** REST API exposes the gold layer by running raw SQL through **SQLAlchemy**. The dashboard is a client of that API, built with HTML, CSS and a Leaflet map.
 
 ![Dashboard showing all industries](docs/dashboard.png)
 
@@ -18,8 +18,9 @@ flowchart LR
     SL --> SV[(silver schema<br/>clean leads)]
     SV --> G[gold_marts]
     G --> GD[(gold schema<br/>8 aggregate tables)]
-    GD -->|raw SQL via SQLAlchemy| A[FastAPI]
-    A --> D[Dashboard]
+    GD -->|raw SQL via SQLAlchemy| A[FastAPI REST API]
+    A -->|JSON| D[Dashboard]
+    A -->|JSON| C[Any other client]
 ```
 
 Each layer is its own PostgreSQL schema, and each job reads only from the layer before it. Any job can be re-run on its own without starting the whole pipeline again.
@@ -80,11 +81,51 @@ Column rules live in `etl/transforms/columns.py`, row-level steps in `etl/transf
 6. **De-duplicate:** keep one row per email address across all sources.
 7. **Aggregate (gold):** industry summary, locations, email mix, company size mix, turnover mix, SIC divisions, job roles and incorporations by year.
 
+## API
+
+The `api/` package is a read-only REST API over the gold layer. Each request moves through three layers:
+
+1. **Router** (`api/routers/`): validates the input and declares the response model.
+2. **Query function** (`api/queries.py`): runs raw SQL through SQLAlchemy `text()` with bound parameters. This is the only place SQL lives.
+3. **Pydantic schema** (`api/schemas.py`): shapes and documents the response.
+
+![Interactive API docs](docs/api-docs.png)
+
+Interactive docs (Swagger UI) are served at http://127.0.0.1:8000/docs, and the OpenAPI spec at `/openapi.json`.
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/industries` | Every industry with leads, companies, callable leads and TPS rate |
+| `GET /api/industries/{code}` | One industry, e.g. `/api/industries/K` (404 if unknown) |
+| `GET /api/overview` | Headline totals |
+| `GET /api/locations` | Leads per postcode area with latitude and longitude |
+| `GET /api/towns?limit=10` | Towns with the most leads |
+| `GET /api/breakdowns/{dimension}` | Lead counts by `email-type`, `company-size`, `turnover-band`, `sic-division` or `job-role` |
+| `GET /api/turnover/comparison` | Turnover band mix of one industry against all industries |
+| `GET /api/incorporations` | Companies incorporated per year, with empty years filled in |
+| `GET /api/gold` | Every gold table with its columns and row count |
+| `GET /api/gold/{table}?limit=100&offset=0` | Paginated rows from any gold table |
+| `GET /api/pipeline/stages` | Row counts recorded by each ETL job |
+
+Most endpoints accept `?industry=K` (a SIC section code) to filter to one industry.
+
+Safety measures:
+
+- **Validated input:** the industry code must be a single capital letter, the breakdown dimension must be one of the five listed above, and `limit`/`offset` are bounded.
+- **Allow-listed tables:** gold table names are checked against `information_schema` before they reach SQL.
+- **Read-only database access:** the connection runs with `default_transaction_read_only` and a 5-second statement timeout.
+- **Clean failures:** database errors return `503` instead of crashing the server.
+
+```bash
+curl "http://127.0.0.1:8000/api/industries/K"
+# {"sector_code":"K","industry":"Finance & Insurance","leads":1041,"companies":348,"callable_leads":981,"tps_leads":60,"tps_rate":5.8}
+```
+
 ## Dashboard
 
 ![Dashboard filtered to Finance & Insurance](docs/dashboard-finance.png)
 
-The industry buttons filter the whole dashboard. Every chart is a raw SQL query against the gold schema, run through SQLAlchemy `text()` with a bound `:industry` parameter.
+The dashboard (`dashboard/`) is a static HTML/CSS/JS client of the API. Each chart declares which endpoint it reads. When you pick an industry, every request runs in parallel with `?industry=` added, and shared responses are fetched only once.
 
 - **Overview:** leads, companies, callable leads and TPS-registered rate.
 - **Donut charts:** reachability, email type and company size, drawn in pure CSS with `conic-gradient`.
@@ -94,8 +135,6 @@ The industry buttons filter the whole dashboard. Every chart is a raw SQL query 
   - The selected industry's turnover profile against all industries.
 - **Breakdowns:** top towns, SIC divisions, contact roles, and companies incorporated per year.
 - **Pipeline:** row counts through bronze, silver and gold, from `public.etl_stages`.
-
-The API is a single read-only endpoint: `GET /api/dashboard?industry=K` (or `ALL`). It validates the filter, then runs every query in one read-only transaction with a statement timeout.
 
 ## Running it
 
@@ -171,13 +210,13 @@ gold    Rows across 8 gold tables                   1075
 Pipeline finished: bronze, silver and gold schemas loaded into marketing_engine
 ```
 
-### 5. Open the dashboard
+### 5. Start the API and open the dashboard
 
 ```powershell
-python -m dashboard.app
+python -m api.main
 ```
 
-Open http://127.0.0.1:8000 in your browser. The map needs an internet connection to load its tiles. Press `Ctrl+C` in the terminal to stop the server.
+Open http://127.0.0.1:8000 for the dashboard, or http://127.0.0.1:8000/docs to try the API. The map needs an internet connection to load its tiles. Press `Ctrl+C` in the terminal to stop the server.
 
 ### Optional: run one layer or the tests
 
@@ -198,8 +237,8 @@ python -m pytest tests
 | `password authentication failed for user "postgres"` | The password in `DATABASE_URL` is wrong. If it contains special characters, URL-encode them (`@` becomes `%40`, `#` becomes `%23`). |
 | `connection refused` on port 5432 | PostgreSQL isn't running. Start it from Windows Services (`postgresql-x64-…`) or with `brew services start postgresql` on macOS. |
 | `JAVA_GATEWAY_EXITED` or `java not found` | Java isn't installed or isn't on your PATH. Install Java 17+ and open a new terminal. |
-| Dashboard says *Could not load the dashboard* | The pipeline hasn't run against this database yet, or `DATABASE_URL` isn't set in the dashboard's terminal. |
-| `error while attempting to bind on address` when starting the dashboard | Something is already using port 8000, usually another dashboard terminal. Close it and try again. |
+| Dashboard says *Could not load the dashboard*, or the API returns `503` | The pipeline hasn't run against this database yet, or `DATABASE_URL` isn't set in the API's terminal. |
+| `error while attempting to bind on address` when starting the API | Something is already using port 8000, usually another API terminal. Close it and try again. |
 
 ### How it runs on Windows
 
@@ -230,13 +269,23 @@ etl/
   source/
     catalog.py              industry, SIC and naming catalogue for fake data
     generate_fake_data.py   writes the five raw CSVs
+api/
+  main.py                   FastAPI app: routers, error handling, serves the dashboard
+  database.py               SQLAlchemy engine (read-only) and fetch helpers
+  queries.py                every raw SQL query against the gold layer
+  schemas.py                Pydantic response models
+  params.py                 shared query parameters
+  routers/
+    analytics.py            industries, overview, locations, breakdowns, comparisons
+    gold.py                 browse any gold table
+    pipeline.py             ETL stage counts
 dashboard/
-  app.py                    FastAPI + SQLAlchemy raw SQL
-  static/                   index.html, style.css, app.js
+  index.html, style.css, app.js   static client of the API
 tests/
   test_transforms.py        PySpark unit tests for the transforms
+  test_api.py               API tests (validation, filters, 404s, 503s)
 ```
 
 ## Tech stack
 
-PySpark · PostgreSQL · SQLAlchemy · psycopg 3 · FastAPI · Uvicorn · pytest · HTML · CSS · JavaScript · Leaflet · OpenStreetMap
+PySpark · PostgreSQL · SQLAlchemy · psycopg 3 · FastAPI · Pydantic · Uvicorn · pytest · HTML · CSS · JavaScript · Leaflet · OpenStreetMap
