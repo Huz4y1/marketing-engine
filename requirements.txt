@@ -3,3 +3,4 @@ fastapi
 sqlalchemy
 psycopg[binary]
 uvicorn
+pytest
