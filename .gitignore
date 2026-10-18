@@ -1,0 +1,13 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+data/
+jars/
+spark-warehouse/
+metastore_db/
+derby.log
+.env
+.vscode/
+.idea/
+.playwright-mcp/
